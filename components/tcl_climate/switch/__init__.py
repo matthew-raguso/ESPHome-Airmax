@@ -9,6 +9,7 @@ CONF_DISPLAY = "display"
 CONF_BEEP = "beep"
 CONF_HEALTH = "health"
 CONF_RESTORE_STATE = "restore_state"
+CONF_FREEZE_PROTECTION = "freeze_protection"
 
 TclSwitch = tcl_climate_ns.class_(
     "TclSwitch",
@@ -22,6 +23,7 @@ SWITCH_TYPES = {
     CONF_BEEP: TclSwitchType.BEEP_CONTROL,
     CONF_HEALTH: TclSwitchType.HEALTH_CONTROL,
     CONF_RESTORE_STATE: TclSwitchType.RESTORE_STATE_CONTROL,
+    CONF_FREEZE_PROTECTION: TclSwitchType.FREEZE_PROTECTION_CONTROL,
 }
 
 CONFIG_SCHEMA = cv.All(
@@ -54,6 +56,14 @@ CONFIG_SCHEMA = cv.All(
                 icon="mdi:backup-restore",
                 entity_category="config",
                 default_restore_mode="RESTORE_DEFAULT_ON",
+                block_inverted=True,
+            ),
+            # 8 C (46 F) heat; tyjw2_35 with Heat only. Follows appliance
+            # status and is never replayed at boot.
+            cv.Optional(CONF_FREEZE_PROTECTION): switch.switch_schema(
+                TclSwitch,
+                icon="mdi:snowflake-thermometer",
+                default_restore_mode="ALWAYS_OFF",
                 block_inverted=True,
             ),
         }

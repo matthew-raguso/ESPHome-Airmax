@@ -107,6 +107,10 @@ switch:
       id: restore_state_switch
       # Persist only actual switch changes; first boot defaults to enabled.
       restore_mode: RESTORE_DEFAULT_ON
+    freeze_protection:
+      name: Freeze Protection 46F
+      id: freeze_protection_switch
+      entity_category: config
 
 binary_sensor:
   - platform: tcl_climate

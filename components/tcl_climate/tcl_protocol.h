@@ -50,6 +50,8 @@ struct TclProtocolState {
   bool mute{false};
   bool beep{false};
   bool anti_mildew{false};
+  // TYJW2 8 C (46 F) heat, Tuya DP 132 in the stock Della firmware.
+  bool freeze_protection{false};
 
   float current_temperature{0.0f};
   uint8_t fan_speed{0};

@@ -20,6 +20,7 @@ enum class TclSwitchType : uint8_t {
   BEEP_CONTROL,
   HEALTH_CONTROL,
   RESTORE_STATE_CONTROL,
+  FREEZE_PROTECTION_CONTROL,
 };
 
 class TclClimate final : public climate::Climate,
@@ -50,6 +51,9 @@ class TclClimate final : public climate::Climate,
   void set_display_switch(switch_::Switch *value) { this->display_switch_ = value; }
   void set_beep_switch(switch_::Switch *value) { this->beep_switch_ = value; }
   void set_health_switch(switch_::Switch *value) { this->health_switch_ = value; }
+  void set_freeze_protection_switch(switch_::Switch *value) {
+    this->freeze_protection_switch_ = value;
+  }
   void set_restore_state_switch(switch_::Switch *value) {
     this->restore_state_switch_ = value;
   }
@@ -104,6 +108,7 @@ class TclClimate final : public climate::Climate,
     PENDING_SLEEP = 1U << 10,
     PENDING_MUTE = 1U << 11,
     PENDING_BEEP = 1U << 12,
+    PENDING_FREEZE_PROTECTION = 1U << 13,
   };
 
   void process_rx_byte_(uint8_t byte);
@@ -123,6 +128,11 @@ class TclClimate final : public climate::Climate,
   bool status_confirms_command_(const TclProtocolState &state) const;
   bool off_epoch_active_() const;
   void restore_switch_(switch_::Switch *entity, TclSwitchType type);
+  bool supports_freeze_protection_() const;
+  const char *active_custom_preset_() const;
+  void request_freeze_protection_(bool enabled);
+  void end_freeze_protection_(bool restore_target);
+  bool freeze_protection_effective_() const;
 
   TclFrameParser parser_{};
   TclProtocolState state_{};
@@ -135,6 +145,11 @@ class TclClimate final : public climate::Climate,
   uint32_t awaiting_deferred_fields_{0};
   uint32_t pending_off_reset_fields_{0};
   bool last_confirmed_power_{false};
+  // Setpoint in effect before 8 C heat, restored when it ends.
+  optional<float> freeze_saved_target_{};
+  // Temporary diagnostic: last logged TYJW2 status byte 32 (-1 = none yet).
+  int16_t last_logged_status_byte_32_{-1};
+  uint32_t last_status_byte_32_log_ms_{0};
 
   bool supports_heat_{false};
   bool supports_horizontal_swing_{false};
@@ -194,6 +209,7 @@ class TclClimate final : public climate::Climate,
   climate::ClimateSwingMode last_published_swing_mode_{climate::CLIMATE_SWING_OFF};
   optional<climate::ClimateFanMode> last_published_fan_mode_{};
   optional<climate::ClimatePreset> last_published_preset_{};
+  const char *last_published_custom_preset_{nullptr};
   float last_published_target_temperature_{0.0f};
   float last_published_current_temperature_{0.0f};
 
@@ -201,6 +217,7 @@ class TclClimate final : public climate::Climate,
   switch_::Switch *beep_switch_{nullptr};
   switch_::Switch *health_switch_{nullptr};
   switch_::Switch *restore_state_switch_{nullptr};
+  switch_::Switch *freeze_protection_switch_{nullptr};
 
   sensor::Sensor *current_sensor_{nullptr};
   sensor::Sensor *supply_voltage_sensor_{nullptr};

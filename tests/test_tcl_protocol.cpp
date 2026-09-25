@@ -647,6 +647,24 @@ int main() {
           "TYJW2 half-degree decode");
   require(extended_state.anti_mildew, "TYJW2 anti-mildew state preserved");
 
+        for (const uint8_t freeze_bit : {static_cast<uint8_t>(0x08), static_cast<uint8_t>(0x10)}) {
+                auto freeze_status = status;
+                freeze_status[32] |= freeze_bit;
+                freeze_status.back() = tcl_xor_checksum(freeze_status.data(), freeze_status.size() - 1);
+                TclProtocolState freeze_state{};
+                require(tcl_decode_status_frame(freeze_status.data(), freeze_status.size(), freeze_state,
+                                                                                                                                                TYJW2_35) &&
+                                                                freeze_state.freeze_protection,
+                                                "TYJW2 status byte 32 bits 3/4 report 8 C heat");
+                require(tcl_decode_status_frame(freeze_status.data(), freeze_status.size(), freeze_state) &&
+                                                                !freeze_state.freeze_protection,
+                                                "8 C heat status is TYJW2-only");
+        }
+        TclProtocolState no_freeze_state{};
+        require(tcl_decode_status_frame(status.data(), status.size(), no_freeze_state, TYJW2_35) &&
+                                                        !no_freeze_state.freeze_protection,
+                                        "TYJW2 status without byte 32 bits 3/4 is not 8 C heat");
+
   state = make_control_state();
   TclControlFrame control{};
   require(tcl_build_control_frame(state, TCL_35, control), "build proven TCL 35 frame");
@@ -754,6 +772,29 @@ int main() {
   require(tcl_build_control_frame(tyjw2, TYJW2_35, control), "TYJW2 half-degree command");
   require((control.bytes[11] & 0x04) != 0, "TYJW2 half-degree TX bit");
   require((control.bytes[8] & 0x20) != 0, "TYJW2 anti-mildew TX bit");
+        require((control.bytes[32] & 0xC0) == 0, "TYJW2 8 C heat bits clear by default");
+        {
+                auto freeze = tyjw2;
+                freeze.power = true;
+                freeze.mode = 0x04;
+                freeze.freeze_protection = true;
+                require(tcl_build_control_frame(freeze, TYJW2_35, control) &&
+                                                                (control.bytes[32] & 0xC0) == 0x40,
+                                                "TYJW2 8 C heat sets byte 32 bit 6 in Heat");
+                freeze.mode = 0x01;
+                require(tcl_build_control_frame(freeze, TYJW2_35, control) &&
+                                                                (control.bytes[32] & 0xC0) == 0,
+                                                "TYJW2 8 C heat is never sent outside Heat");
+                freeze.mode = 0x04;
+                freeze.power = false;
+                require(tcl_build_control_frame(freeze, TYJW2_35, control) &&
+                                                                (control.bytes[32] & 0xC0) == 0,
+                                                "TYJW2 8 C heat is not sent while OFF");
+                freeze.power = true;
+                require(tcl_build_control_frame(freeze, TCL_35, control) &&
+                                                                (control.bytes[32] & 0x40) == 0,
+                                                "8 C heat bit is TYJW2-only");
+        }
   tyjw2.vertical_swing = true;
   tyjw2.horizontal_swing = true;
   tyjw2.vertical_vane_position = 0x10;
