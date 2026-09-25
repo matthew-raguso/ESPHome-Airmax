@@ -69,6 +69,9 @@ class TclClimate final : public climate::Climate,
   }
 
   void set_fan_speed_text_sensor(text_sensor::TextSensor *value) { this->fan_speed_text_sensor_ = value; }
+  void set_fan_speed_thresholds(uint8_t low, uint8_t medium, uint8_t high, uint8_t turbo) {
+    this->fan_speed_thresholds_ = TclFanSpeedThresholds{low, medium, high, turbo};
+  }
   void set_fault_text_sensor(text_sensor::TextSensor *value) { this->fault_text_sensor_ = value; }
   void set_protocol_profile_text_sensor(text_sensor::TextSensor *value) {
     this->protocol_profile_text_sensor_ = value;
@@ -210,6 +213,7 @@ class TclClimate final : public climate::Climate,
   sensor::Sensor *horizontal_vane_position_sensor_{nullptr};
 
   text_sensor::TextSensor *fan_speed_text_sensor_{nullptr};
+  TclFanSpeedThresholds fan_speed_thresholds_{};
   text_sensor::TextSensor *fault_text_sensor_{nullptr};
   text_sensor::TextSensor *protocol_profile_text_sensor_{nullptr};
   binary_sensor::BinarySensor *deep_sleep_binary_sensor_{nullptr};

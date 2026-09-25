@@ -1,0 +1,50 @@
+# TYWE1S / TYJW2 Wi-Fi module for the Della 048-TL.
+# AC-side UART is exposed on GPIO15 (TX) and GPIO13 (RX).
+# UART0 on GPIO1/GPIO3 remains available for flashing and logs.
+substitutions:
+  device_name: della-garage
+  friendly_name: Della Garage
+  uart_tx_pin: GPIO15
+  uart_rx_pin: GPIO13
+  protocol_profile: tyjw2_35
+  supports_heat: true
+  supports_horizontal_swing: true
+
+packages:
+  tcl_climate_common: !include common.yaml
+
+esp8266:
+  board: esp_wroom_02
+  restore_from_flash: true
+
+logger:
+  baud_rate: 0
+
+wifi:
+  ap:
+    ssid: "Della Garage"
+    password: !secret fallback_ap_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+debug:
+  update_interval: 60s
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: Reset Reason
+
+sensor:
+  - platform: debug
+    free:
+      name: Heap Free
+    block:
+      name: Heap Max Block
+
+ota:
+  - platform: esphome
+    encryption:
+      key: !secret api_encryption_key

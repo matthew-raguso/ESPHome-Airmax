@@ -1,0 +1,50 @@
+# SMLIGHT SLWF-01 / SLWF-01 Pro for the TYJW2/TCL AC bus.
+# The USB-C UART remains available for logs and flashing on GPIO1/GPIO3.
+# The AC service-port UART is level-shifted on GPIO12/GPIO14.
+substitutions:
+  device_name: della-garage
+  friendly_name: Della Garage
+  uart_tx_pin: GPIO12
+  uart_rx_pin: GPIO14
+  protocol_profile: tyjw2_35
+  supports_heat: true
+  supports_horizontal_swing: true
+
+packages:
+  tcl_climate_common: !include common.yaml
+
+esp8266:
+  board: esp12e
+  restore_from_flash: true
+
+logger:
+  baud_rate: 115200
+
+wifi:
+  ap:
+    ssid: "della-garage"
+    password: !secret fallback_ap_password
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+debug:
+  update_interval: 60s
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: Reset Reason
+
+sensor:
+  - platform: debug
+    free:
+      name: Heap Free
+    block:
+      name: Heap Max Block
+
+ota:
+  - platform: esphome
+    encryption:
+      key: !secret api_encryption_key

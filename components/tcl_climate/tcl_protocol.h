@@ -154,7 +154,15 @@ class TclFrameParser {
 
 uint8_t tcl_xor_checksum(const uint8_t *data, size_t length);
 const char *tcl_protocol_profile_name(TclProtocolProfile profile);
-const char *tcl_fan_speed_text(uint8_t fan_speed);
+struct TclFanSpeedThresholds {
+  uint8_t low{1};
+  uint8_t medium{86};
+  uint8_t high{99};
+  uint8_t turbo{118};
+};
+
+const char *tcl_fan_speed_text(uint8_t fan_speed,
+                               const TclFanSpeedThresholds &thresholds = TclFanSpeedThresholds{});
 void tcl_format_fault_text(uint8_t fault, char *output, size_t output_size);
 void tcl_format_profile_text(TclProtocolProfile profile, size_t status_frame_size,
                              char *output, size_t output_size);

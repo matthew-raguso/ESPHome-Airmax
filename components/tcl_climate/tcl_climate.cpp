@@ -1252,7 +1252,7 @@ void TclClimate::publish_protocol_state_() {
   }
 
   publish_text_if_changed(this->fan_speed_text_sensor_,
-                          tcl_fan_speed_text(this->state_.fan_speed));
+                          tcl_fan_speed_text(this->state_.fan_speed, this->fan_speed_thresholds_));
 
   char fault_text[16];
   tcl_format_fault_text(this->state_.fault, fault_text, sizeof(fault_text));
