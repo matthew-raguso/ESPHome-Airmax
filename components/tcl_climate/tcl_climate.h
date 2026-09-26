@@ -131,7 +131,7 @@ class TclClimate final : public climate::Climate,
   bool supports_freeze_protection_() const;
   const char *active_custom_preset_() const;
   void request_freeze_protection_(bool enabled);
-  void end_freeze_protection_(bool restore_target);
+  void end_freeze_protection_();
   bool freeze_protection_effective_() const;
 
   TclFrameParser parser_{};
@@ -145,11 +145,7 @@ class TclClimate final : public climate::Climate,
   uint32_t awaiting_deferred_fields_{0};
   uint32_t pending_off_reset_fields_{0};
   bool last_confirmed_power_{false};
-  // Setpoint in effect before 8 C heat, restored when it ends.
-  optional<float> freeze_saved_target_{};
-  // Temporary diagnostic: last logged TYJW2 status byte 32 (-1 = none yet).
-  int16_t last_logged_status_byte_32_{-1};
-  uint32_t last_status_byte_32_log_ms_{0};
+  bool freeze_protection_published_{false};
 
   bool supports_heat_{false};
   bool supports_horizontal_swing_{false};

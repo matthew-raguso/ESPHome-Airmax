@@ -376,8 +376,8 @@ bool tcl_decode_status_frame(const uint8_t *data, const size_t length, TclProtoc
   decoded.fan = static_cast<uint8_t>((data[8] >> 4U) & 0x07);
   decoded.health = (data[9] & 0x04) != 0;
   decoded.anti_mildew = profile_is_tyjw2(profile) && (data[9] & 0x08) != 0;
-  // Stock Della firmware reports 8 C heat when either status bit is set.
-  decoded.freeze_protection = profile_is_tyjw2(profile) && (data[32] & 0x18) != 0;
+  // 8 °C heat: confirmed on the Della unit with its IR remote (byte 32 bit 7).
+  decoded.freeze_protection = profile_is_tyjw2(profile) && (data[32] & 0x80) != 0;
   decoded.horizontal_swing = (data[10] & 0x20) != 0;
   decoded.vertical_swing = (data[10] & 0x40) != 0;
 
@@ -488,6 +488,11 @@ bool tcl_build_control_frame(const TclProtocolState &state, TclProtocolProfile p
   bytes[10] |= control_fan;
   if (state.vertical_swing)
     bytes[10] |= 0x38;
+  // 8 °C heat (stock Della firmware, Tuya DP 123 bit 4): byte 10 bit 7, Heat only.
+  const bool freeze_protection = profile_is_tyjw2(profile) && state.freeze_protection &&
+                                 state.power && control_mode == 0x01;
+  if (freeze_protection)
+    bytes[10] |= 0x80;
 
   if (profile_is_tyjw2(profile) || profile_is_tclac(profile)) {
     // These extended layouts separate movement and vane position.
@@ -526,11 +531,6 @@ bool tcl_build_control_frame(const TclProtocolState &state, TclProtocolProfile p
               : horizontal_fixed;
     }
     bytes[32] = static_cast<uint8_t>((bytes[32] & 0xE0U) | vertical_position);
-    // 8 C heat is only encoded in Heat; the stock firmware's non-Heat
-    // variant (bit 7) has no known meaning and is never sent.
-    if (profile_is_tyjw2(profile) && state.freeze_protection && state.power &&
-        control_mode == 0x01)
-      bytes[32] |= 0x40;
     if (profile_is_tyjw2(profile)) {
       bytes[33] =
           static_cast<uint8_t>((bytes[33] & 0x40U) | 0x80U | horizontal_position);
@@ -563,6 +563,9 @@ bool tcl_build_control_frame(const TclProtocolState &state, TclProtocolProfile p
   bytes[19] &= static_cast<uint8_t>(~0x01U);
   if (state.sleep)
     bytes[19] |= 0x01;
+  // The stock firmware clears the sleep bits whenever it sends 8 °C heat.
+  if (freeze_protection)
+    bytes[19] &= static_cast<uint8_t>(~0x07U);
 
   bytes[frame.size - 1] = tcl_xor_checksum(bytes.data(), frame.size - 1);
   return true;

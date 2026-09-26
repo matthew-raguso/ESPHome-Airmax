@@ -58,7 +58,7 @@ CONFIG_SCHEMA = cv.All(
                 default_restore_mode="RESTORE_DEFAULT_ON",
                 block_inverted=True,
             ),
-            # 8 C (46 F) heat; tyjw2_35 with Heat only. Follows appliance
+            # 8 °C (46 °F) heat; tyjw2_35 with Heat only. Follows the appliance
             # status and is never replayed at boot.
             cv.Optional(CONF_FREEZE_PROTECTION): switch.switch_schema(
                 TclSwitch,

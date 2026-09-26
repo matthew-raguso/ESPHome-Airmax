@@ -80,6 +80,8 @@ climate:
     supports_heat: ${supports_heat}
     supports_horizontal_swing: ${supports_horizontal_swing}
     deep_sleep_active_low: true
+    visual:
+      min_temperature: 16.1
 
 switch:
   - platform: restart
