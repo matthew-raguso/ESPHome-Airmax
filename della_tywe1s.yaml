@@ -37,12 +37,13 @@ text_sensor:
     reset_reason:
       name: Reset Reason
 
-sensor:
-  - platform: debug
-    free:
-      name: Heap Free
-    block:
-      name: Heap Max Block
+# Optional heap diagnostics; uncomment when needed.
+# sensor:
+#   - platform: debug
+#     free:
+#       name: Heap Free
+#     block:
+#       name: Heap Max Block
 
 ota:
   - platform: esphome
