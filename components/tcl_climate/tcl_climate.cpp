@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <string>
 
@@ -15,6 +16,7 @@ namespace esphome::tcl_climate {
 namespace {
 
 static const char *const TAG = "tcl_climate";
+static const char *const FREEZE_PROTECTION_PRESET = "Freeze Protection";
 
 void publish_sensor_if_changed(sensor::Sensor *entity, const float value, const float epsilon = 0.001f) {
   if (entity == nullptr)
@@ -58,6 +60,9 @@ void TclClimate::setup() {
   this->current_temperature = unavailable;
   this->target_temperature = unavailable;
   this->status_set_warning();
+  // Register before restore so a persisted custom preset can be resolved.
+  if (this->supports_freeze_protection_())
+    this->set_supported_custom_presets({FREEZE_PROTECTION_PRESET});
 
   // Child switches are not Components themselves. Restore their configured state here,
   // after code generation has attached every child to this climate instance.
@@ -665,6 +670,9 @@ bool TclClimate::status_confirms_command_(const TclProtocolState &state) const {
     return false;
   if ((fields & PENDING_MUTE) && state.mute != expected.mute)
     return false;
+  if ((fields & PENDING_FREEZE_PROTECTION) &&
+      state.freeze_protection != expected.freeze_protection)
+    return false;
   // Beep is a write-only policy on the known status frames.
   return true;
 }
@@ -698,6 +706,9 @@ void TclClimate::queue_switch_change(const TclSwitchType type, const bool state)
       this->restore_state_runtime_enabled_ = state;
       ESP_LOGI(TAG, "Persisted climate restore for the next boot: %s", ONOFF(state));
       break;
+    case TclSwitchType::FREEZE_PROTECTION_CONTROL:
+      this->request_freeze_protection_(state);
+      return;
   }
 
   const bool two_phase_profile =
@@ -714,10 +725,19 @@ void TclClimate::control(const climate::ClimateCall &call) {
   const bool tclac_profile =
       this->active_profile_ == TclProtocolProfile::PROFILE_TCLAC_38;
   const bool explicit_fan = call.get_fan_mode().has_value();
+  const bool call_requests_freeze_protection =
+      !call.get_preset().has_value() && call.has_custom_preset() &&
+      std::strcmp(call.get_custom_preset().c_str(), FREEZE_PROTECTION_PRESET) == 0;
   bool requested_off = false;
   bool requested_working_mode = false;
 
   if (const auto requested_mode = call.get_mode(); requested_mode.has_value()) {
+    const bool previous_power = (this->pending_fields_ & PENDING_POWER)
+                                    ? this->requested_state_.power
+                                    : this->state_.power;
+    const uint8_t previous_mode = (this->pending_fields_ & PENDING_MODE)
+                                      ? this->requested_state_.mode
+                                      : this->state_.mode;
     switch (*requested_mode) {
       case climate::CLIMATE_MODE_OFF:
         requested_off = true;
@@ -769,6 +789,13 @@ void TclClimate::control(const climate::ClimateCall &call) {
         ESP_LOGW(TAG, "Ignoring unsupported climate mode");
         break;
     }
+    // Power-off or a real mode change ends 8 °C heat; re-selecting the
+    // current mode does not. A Freeze Protection preset in the same call
+    // re-enables it below.
+    if (requested_off ||
+        (requested_working_mode &&
+         (!previous_power || this->requested_state_.mode != previous_mode)))
+      this->end_freeze_protection_();
     if (requested_working_mode && !tclac_profile) {
       // OFF carries legacy reset side effects. If it is superseded before
       // transmission, remove only those synthetic changes; later explicit
@@ -778,7 +805,13 @@ void TclClimate::control(const climate::ClimateCall &call) {
     }
   }
 
-  if (const auto requested_target = call.get_target_temperature(); requested_target.has_value()) {
+  const auto requested_target = call.get_target_temperature();
+  if (requested_target.has_value() && *requested_target < 16.0f &&
+      (call_requests_freeze_protection || this->freeze_protection_effective_())) {
+    // The 8 °C shown during 8 °C heat is not a setpoint. A restore after power
+    // loss replays it; clamping it to 16 °C would overwrite the real setpoint.
+    ESP_LOGD(TAG, "Ignoring %.1f °C target while 8 °C heat is requested", *requested_target);
+  } else if (requested_target.has_value()) {
     const float step = tcl_protocol_target_step(this->active_profile_);
     const float maximum = step == 0.5f ? 31.5f : 31.0f;
     const float bounded = std::max(16.0f, std::min(maximum, *requested_target));
@@ -882,6 +915,7 @@ void TclClimate::control(const climate::ClimateCall &call) {
   if (const auto requested_preset = call.get_preset(); requested_preset.has_value()) {
     bool supported = true;
     uint32_t explicit_preset_fields = 0;
+    this->end_freeze_protection_();
     switch (*requested_preset) {
       case climate::CLIMATE_PRESET_SLEEP:
         this->requested_state_.eco = false;
@@ -978,6 +1012,11 @@ void TclClimate::control(const climate::ClimateCall &call) {
     } else {
       ESP_LOGW(TAG, "Ignoring unsupported preset");
     }
+  } else if (call.has_custom_preset()) {
+    if (std::strcmp(call.get_custom_preset().c_str(), FREEZE_PROTECTION_PRESET) == 0)
+      this->request_freeze_protection_(true);
+    else
+      ESP_LOGW(TAG, "Ignoring unsupported custom preset");
   }
 
   // Climate restore calls contain mode, fan and preset together. For the
@@ -989,8 +1028,9 @@ void TclClimate::control(const climate::ClimateCall &call) {
     this->requested_state_.sleep = false;
     this->requested_state_.turbo = false;
     this->requested_state_.eco = false;
+    this->requested_state_.freeze_protection = false;
     this->pending_fields_ |= PENDING_POWER | PENDING_FAN | PENDING_SLEEP |
-                             PENDING_TURBO | PENDING_ECO;
+                             PENDING_TURBO | PENDING_ECO | PENDING_FREEZE_PROTECTION;
     this->pending_off_reset_fields_ |= LEGACY_OFF_RESET_FIELDS;
   }
 
@@ -1037,6 +1077,60 @@ void TclClimate::apply_fields_(TclProtocolState &target,
     target.mute = source.mute;
   if (fields & PENDING_BEEP)
     target.beep = source.beep;
+  if (fields & PENDING_FREEZE_PROTECTION)
+    target.freeze_protection = source.freeze_protection;
+}
+
+const char *TclClimate::active_custom_preset_() const {
+  // Custom preset strings are interned in the supported list, so pointer
+  // identity is enough to detect a change.
+  return this->has_custom_preset() ? this->get_custom_preset().c_str() : nullptr;
+}
+
+bool TclClimate::supports_freeze_protection_() const {
+  return this->supports_heat_ &&
+         this->configured_profile_ == TclProtocolProfile::PROFILE_TYJW2_35;
+}
+
+void TclClimate::request_freeze_protection_(const bool enabled) {
+  if (enabled && !this->supports_freeze_protection_()) {
+    ESP_LOGW(TAG, "Freeze Protection needs Heat support and the tyjw2_35 profile");
+    return;
+  }
+  if (!enabled) {
+    this->end_freeze_protection_();
+    return;
+  }
+  this->requested_state_.freeze_protection = true;
+  this->pending_fields_ |= PENDING_FREEZE_PROTECTION;
+
+  // Match the stock Della firmware: 8 °C heat runs in Heat with Eco, Turbo,
+  // Mute and Sleep cleared and the fan on Auto. The appliance keeps the
+  // normal setpoint underneath and returns to it when 8 °C heat ends.
+  this->pending_fields_ &= ~this->pending_off_reset_fields_;
+  this->pending_off_reset_fields_ = 0;
+  this->requested_state_.power = true;
+  this->requested_state_.mode = 0x04;
+  this->requested_state_.fan = 0x00;
+  this->requested_state_.eco = false;
+  this->requested_state_.sleep = false;
+  this->requested_state_.turbo = false;
+  this->requested_state_.mute = false;
+  this->pending_fields_ |= PENDING_POWER | PENDING_MODE | PENDING_FAN | PENDING_ECO |
+                           PENDING_SLEEP | PENDING_TURBO | PENDING_MUTE;
+}
+
+void TclClimate::end_freeze_protection_() {
+  if (!this->freeze_protection_effective_())
+    return;
+  this->requested_state_.freeze_protection = false;
+  this->pending_fields_ |= PENDING_FREEZE_PROTECTION;
+}
+
+bool TclClimate::freeze_protection_effective_() const {
+  if (this->pending_fields_ & PENDING_FREEZE_PROTECTION)
+    return this->requested_state_.freeze_protection;
+  return this->state_.freeze_protection;
 }
 
 float TclClimate::add_temperature_sample_(const float value) {
@@ -1073,6 +1167,7 @@ void TclClimate::publish_climate_state_(const bool force) {
       this->action != this->last_published_action_ ||
       this->fan_mode != this->last_published_fan_mode_ ||
       this->preset != this->last_published_preset_ ||
+      this->active_custom_preset_() != this->last_published_custom_preset_ ||
       this->swing_mode != this->last_published_swing_mode_ ||
       float_state_changed(this->target_temperature,
                           this->last_published_target_temperature_, 0.01f);
@@ -1097,6 +1192,7 @@ void TclClimate::publish_climate_state_(const bool force) {
   this->last_published_action_ = this->action;
   this->last_published_fan_mode_ = this->fan_mode;
   this->last_published_preset_ = this->preset;
+  this->last_published_custom_preset_ = this->active_custom_preset_();
   this->last_published_swing_mode_ = this->swing_mode;
   this->last_published_target_temperature_ = this->target_temperature;
   this->last_published_current_temperature_ = this->current_temperature;
@@ -1161,25 +1257,32 @@ void TclClimate::publish_protocol_state_() {
 
   const bool tclac_profile =
       this->active_profile_ == TclProtocolProfile::PROFILE_TCLAC_38;
+  climate::ClimatePreset preset = climate::CLIMATE_PRESET_NONE;
   if (tclac_profile) {
     if (visible_state.eco)
-      this->preset = climate::CLIMATE_PRESET_ECO;
+      preset = climate::CLIMATE_PRESET_ECO;
     else if (this->health_switch_ == nullptr && visible_state.health)
-      this->preset = climate::CLIMATE_PRESET_COMFORT;
+      preset = climate::CLIMATE_PRESET_COMFORT;
     else if (visible_state.sleep)
-      this->preset = climate::CLIMATE_PRESET_SLEEP;
-    else
-      this->preset = climate::CLIMATE_PRESET_NONE;
+      preset = climate::CLIMATE_PRESET_SLEEP;
   } else {
     if (visible_state.turbo)
-      this->preset = climate::CLIMATE_PRESET_BOOST;
+      preset = climate::CLIMATE_PRESET_BOOST;
     else if (visible_state.sleep)
-      this->preset = climate::CLIMATE_PRESET_SLEEP;
+      preset = climate::CLIMATE_PRESET_SLEEP;
     else if (visible_state.eco)
-      this->preset = climate::CLIMATE_PRESET_ECO;
-    else
-      this->preset = climate::CLIMATE_PRESET_NONE;
+      preset = climate::CLIMATE_PRESET_ECO;
   }
+  const bool freeze_protection_active = this->supports_freeze_protection_() &&
+                                        visible_state.power &&
+                                        visible_state.freeze_protection;
+  const bool freeze_protection_changed =
+      freeze_protection_active != this->freeze_protection_published_;
+  this->freeze_protection_published_ = freeze_protection_active;
+  if (freeze_protection_active)
+    this->set_custom_preset_(FREEZE_PROTECTION_PRESET);
+  else
+    this->set_preset_(preset);
 
   if (visible_state.mute) {
     this->fan_mode = climate::CLIMATE_FAN_QUIET;
@@ -1216,7 +1319,10 @@ void TclClimate::publish_protocol_state_() {
         visible_state.vertical_swing ? climate::CLIMATE_SWING_VERTICAL : climate::CLIMATE_SWING_OFF;
   }
 
-  this->target_temperature = visible_state.target_temperature;
+  // While 8 °C heat runs, show what the appliance holds instead of the
+  // normal setpoint it keeps underneath. Display only; never sent.
+  this->target_temperature =
+      freeze_protection_active ? 8.0f : visible_state.target_temperature;
   this->current_temperature = this->state_.current_temperature;
 
   // Do not let a stale status frame overwrite a persisted user choice while
@@ -1231,6 +1337,11 @@ void TclClimate::publish_protocol_state_() {
           this->pending_fields_, this->awaiting_command_fields_,
           this->deferred_fields_, PENDING_HEALTH))
     publish_switch_if_changed(this->health_switch_, this->state_.health);
+  if (tcl_uart_state_can_replace_switch_intent(
+          this->pending_fields_, this->awaiting_command_fields_,
+          this->deferred_fields_, PENDING_FREEZE_PROTECTION))
+    publish_switch_if_changed(this->freeze_protection_switch_,
+                              this->state_.power && this->state_.freeze_protection);
   // Beep is absent from TCL status frames and intentionally never follows
   // UART state; its local persisted switch value remains authoritative.
 
@@ -1252,7 +1363,7 @@ void TclClimate::publish_protocol_state_() {
   }
 
   publish_text_if_changed(this->fan_speed_text_sensor_,
-                          tcl_fan_speed_text(this->state_.fan_speed));
+                          tcl_fan_speed_text(this->state_.fan_speed, this->fan_speed_thresholds_));
 
   char fault_text[16];
   tcl_format_fault_text(this->state_.fault, fault_text, sizeof(fault_text));
@@ -1263,6 +1374,10 @@ void TclClimate::publish_protocol_state_() {
   publish_binary_if_changed(this->deep_sleep_binary_sensor_, deep_sleep);
   publish_binary_if_changed(this->clean_filter_binary_sensor_, this->state_.clean_filter);
   this->publish_climate_state_();
+  // Write the restore state to flash now, not at the next flash interval, so
+  // 8 °C heat survives a power cut right after it changes.
+  if (freeze_protection_changed && global_preferences != nullptr)
+    global_preferences->sync();
 }
 
 void TclClimate::publish_profile_state_() {

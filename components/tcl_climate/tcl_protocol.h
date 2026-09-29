@@ -50,6 +50,8 @@ struct TclProtocolState {
   bool mute{false};
   bool beep{false};
   bool anti_mildew{false};
+  // TYJW2 8 °C (46 °F) heat, Tuya DP 132 in the stock Della firmware.
+  bool freeze_protection{false};
 
   float current_temperature{0.0f};
   uint8_t fan_speed{0};
@@ -154,7 +156,18 @@ class TclFrameParser {
 
 uint8_t tcl_xor_checksum(const uint8_t *data, size_t length);
 const char *tcl_protocol_profile_name(TclProtocolProfile profile);
-const char *tcl_fan_speed_text(uint8_t fan_speed);
+// Raw fan-speed boundaries for the diagnostic label. A value of at least
+// `turbo` is TURBO, at least `high` is HIGH, and so on; nonzero values below
+// `low` are QUIET. The defaults reproduce the original labels (no QUIET).
+struct TclFanSpeedThresholds {
+  uint8_t low{1};
+  uint8_t medium{86};
+  uint8_t high{99};
+  uint8_t turbo{118};
+};
+
+const char *tcl_fan_speed_text(uint8_t fan_speed,
+                               const TclFanSpeedThresholds &thresholds = TclFanSpeedThresholds{});
 void tcl_format_fault_text(uint8_t fault, char *output, size_t output_size);
 void tcl_format_profile_text(TclProtocolProfile profile, size_t status_frame_size,
                              char *output, size_t output_size);

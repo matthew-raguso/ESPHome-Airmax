@@ -272,7 +272,28 @@ those child entries when the connected model does not support them.
 
 Diagnostic text-sensor states are published in English:
 
-- Fan speed: `OFF`, `LOW`, `MEDIUM`, `HIGH` or `TURBO`.
+- Fan speed: `OFF`, `QUIET`, `LOW`, `MEDIUM`, `HIGH` or `TURBO`.
+
+The fan-speed label is derived from the raw motor speed (`fan_speed_raw`).
+Motor speeds differ between models, so the boundaries are configurable. A raw
+speed at or above a threshold gets that label; nonzero speeds below `low` are
+reported as `QUIET`. The defaults (`1`, `86`, `99`, `118`) reproduce the
+original labels.
+
+```yaml
+text_sensor:
+  - platform: tcl_climate
+    fan_speed:
+      name: Fan Speed
+    fan_speed_thresholds:
+      low: 84
+      medium: 96
+      high: 112
+      turbo: 126
+```
+
+Thresholds must be strictly increasing: `low < medium < high < turbo`.
+
 - Fault: `NO FAULTS` or `FAULT XX`, where `XX` is the hexadecimal fault code.
 - With `status_frame_length: auto`, the protocol-profile text sensor reports
   `RX AUTO (waiting)` until the response length and signature are locked.

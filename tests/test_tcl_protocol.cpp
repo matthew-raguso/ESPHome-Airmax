@@ -647,6 +647,27 @@ int main() {
           "TYJW2 half-degree decode");
   require(extended_state.anti_mildew, "TYJW2 anti-mildew state preserved");
 
+        {
+                // Captured on the Della unit: IR-remote 8 C heat changed byte 32 0x42 -> 0xC2.
+                auto freeze_status = status;
+                freeze_status[32] = 0xC2;
+                freeze_status.back() = tcl_xor_checksum(freeze_status.data(), freeze_status.size() - 1);
+                TclProtocolState freeze_state{};
+                require(tcl_decode_status_frame(freeze_status.data(), freeze_status.size(), freeze_state,
+                                                                                                                                                TYJW2_35) &&
+                                                                freeze_state.freeze_protection,
+                                                "TYJW2 status byte 32 bit 7 reports 8 C heat");
+                require(tcl_decode_status_frame(freeze_status.data(), freeze_status.size(), freeze_state) &&
+                                                                !freeze_state.freeze_protection,
+                                                "8 C heat status is TYJW2-only");
+                freeze_status[32] = 0x42;
+                freeze_status.back() = tcl_xor_checksum(freeze_status.data(), freeze_status.size() - 1);
+                require(tcl_decode_status_frame(freeze_status.data(), freeze_status.size(), freeze_state,
+                                                                                                                                                TYJW2_35) &&
+                                                                !freeze_state.freeze_protection,
+                                                "TYJW2 byte 32 without bit 7 is not 8 C heat");
+        }
+
   state = make_control_state();
   TclControlFrame control{};
   require(tcl_build_control_frame(state, TCL_35, control), "build proven TCL 35 frame");
@@ -754,6 +775,32 @@ int main() {
   require(tcl_build_control_frame(tyjw2, TYJW2_35, control), "TYJW2 half-degree command");
   require((control.bytes[11] & 0x04) != 0, "TYJW2 half-degree TX bit");
   require((control.bytes[8] & 0x20) != 0, "TYJW2 anti-mildew TX bit");
+  require((control.bytes[10] & 0x80) == 0, "TYJW2 8 C heat bit clear by default");
+  {
+    auto freeze = tyjw2;
+    freeze.power = true;
+    freeze.mode = 0x04;
+    freeze.sleep = true;
+    freeze.freeze_protection = true;
+    require(tcl_build_control_frame(freeze, TYJW2_35, control) &&
+                (control.bytes[10] & 0x80) != 0 && (control.bytes[19] & 0x07) == 0,
+            "TYJW2 8 C heat sets byte 10 bit 7 and clears sleep bits in Heat");
+    require((control.bytes[32] & 0xC0) == 0,
+            "TYJW2 8 C heat leaves byte 32 airflow bits alone");
+    freeze.mode = 0x01;
+    require(tcl_build_control_frame(freeze, TYJW2_35, control) &&
+                (control.bytes[10] & 0x80) == 0,
+            "TYJW2 8 C heat is never sent outside Heat");
+    freeze.mode = 0x04;
+    freeze.power = false;
+    require(tcl_build_control_frame(freeze, TYJW2_35, control) &&
+                (control.bytes[10] & 0x80) == 0,
+            "TYJW2 8 C heat is not sent while OFF");
+    freeze.power = true;
+    require(tcl_build_control_frame(freeze, TCL_35, control) &&
+                (control.bytes[10] & 0x80) == 0,
+            "8 C heat bit is TYJW2-only");
+  }
   tyjw2.vertical_swing = true;
   tyjw2.horizontal_swing = true;
   tyjw2.vertical_vane_position = 0x10;

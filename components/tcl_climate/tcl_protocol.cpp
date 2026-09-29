@@ -143,7 +143,8 @@ bool map_status_fan_to_control(const uint8_t status_fan, const TclProtocolProfil
       control_fan = 0x00;
       return true;
     case 0x01:
-      control_fan = 0x02;
+      // TYJW2 boards treat 0x02 as medium-low (same speed as AUTO); 0x01 is LOW.
+      control_fan = profile_is_tyjw2(profile) ? 0x01 : 0x02;
       return true;
     case 0x02:
       control_fan = 0x03;
@@ -232,16 +233,19 @@ const char *tcl_protocol_profile_name(const TclProtocolProfile profile) {
   return "unknown";
 }
 
-const char *tcl_fan_speed_text(const uint8_t fan_speed) {
-  if (fan_speed > 117)
+const char *tcl_fan_speed_text(const uint8_t fan_speed,
+                               const TclFanSpeedThresholds &thresholds) {
+  if (fan_speed == 0)
+    return "OFF";
+  if (fan_speed >= thresholds.turbo)
     return "TURBO";
-  if (fan_speed >= 99)
+  if (fan_speed >= thresholds.high)
     return "HIGH";
-  if (fan_speed >= 86)
+  if (fan_speed >= thresholds.medium)
     return "MEDIUM";
-  if (fan_speed > 0)
+  if (fan_speed >= thresholds.low)
     return "LOW";
-  return "OFF";
+  return "QUIET";
 }
 
 void tcl_format_fault_text(const uint8_t fault, char *output, const size_t output_size) {
@@ -367,11 +371,13 @@ bool tcl_decode_status_frame(const uint8_t *data, const size_t length, TclProtoc
   decoded.target_temperature = static_cast<float>((data[8] & 0x0F) + 16U);
   if (profile_is_tyjw2(profile) && (data[9] & 0x01) != 0)
     decoded.target_temperature += 0.5f;
-  decoded.fan = profile_is_tyjw2(profile)
-                    ? static_cast<uint8_t>((data[8] >> 4U) & 0x0F)
-                    : static_cast<uint8_t>((data[8] >> 4U) & 0x07);
+  // Fan speed is bits 4..6. Bit 7 is a separate status flag that some units
+  // (e.g. Della/TYJW2 boards) keep set, so AUTO reports as 0x8 in the nibble.
+  decoded.fan = static_cast<uint8_t>((data[8] >> 4U) & 0x07);
   decoded.health = (data[9] & 0x04) != 0;
   decoded.anti_mildew = profile_is_tyjw2(profile) && (data[9] & 0x08) != 0;
+  // 8 °C heat: confirmed on the Della unit with its IR remote (byte 32 bit 7).
+  decoded.freeze_protection = profile_is_tyjw2(profile) && (data[32] & 0x80) != 0;
   decoded.horizontal_swing = (data[10] & 0x20) != 0;
   decoded.vertical_swing = (data[10] & 0x40) != 0;
 
@@ -482,6 +488,11 @@ bool tcl_build_control_frame(const TclProtocolState &state, TclProtocolProfile p
   bytes[10] |= control_fan;
   if (state.vertical_swing)
     bytes[10] |= 0x38;
+  // 8 °C heat (stock Della firmware, Tuya DP 123 bit 4): byte 10 bit 7, Heat only.
+  const bool freeze_protection = profile_is_tyjw2(profile) && state.freeze_protection &&
+                                 state.power && control_mode == 0x01;
+  if (freeze_protection)
+    bytes[10] |= 0x80;
 
   if (profile_is_tyjw2(profile) || profile_is_tclac(profile)) {
     // These extended layouts separate movement and vane position.
@@ -552,6 +563,9 @@ bool tcl_build_control_frame(const TclProtocolState &state, TclProtocolProfile p
   bytes[19] &= static_cast<uint8_t>(~0x01U);
   if (state.sleep)
     bytes[19] |= 0x01;
+  // The stock firmware clears the sleep bits whenever it sends 8 °C heat.
+  if (freeze_protection)
+    bytes[19] &= static_cast<uint8_t>(~0x07U);
 
   bytes[frame.size - 1] = tcl_xor_checksum(bytes.data(), frame.size - 1);
   return true;

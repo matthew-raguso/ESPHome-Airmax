@@ -5,6 +5,9 @@ substitutions:
   friendly_name: Airmax AC
   uart_tx_pin: GPIO1
   uart_rx_pin: GPIO3
+  protocol_profile: tcl_35
+  supports_heat: false
+  supports_horizontal_swing: false
 
 packages:
   tcl_climate_common: !include common.yaml
